@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Skeleton from "@mui/material/Skeleton";
 import useStore from "store/useStore";
 import serverConfig from "config";
@@ -13,15 +13,16 @@ const TimestampAdder: React.FC = () => {
   const { setIsLoading } = useStore();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mergedVideoRef = useRef<HTMLVideoElement | null>(null);
+  const selectionRangeRef = useRef<{ id: number; start: number; end: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timelineImages, setTimelineImages] = useState<number[]>([]);
   const [duration, setDuration] = useState<number>(0);
   const [dragging, setDragging] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
-  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
-  const [ranges, setRanges] = useState<{ id: string; start: number; end: number }[]>([]);
+  const [selectionRange, setSelectionRange] = useState<{ id: number; start: number; end: number } | null>(null);
+  const [ranges, setRanges] = useState<{ id: number; start: number; end: number }[]>([]);
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
-  const [selectedRangeId, setSelectedRangeId] = useState<string | null>(null);
+  const [selectedRangeId, setSelectedRangeId] = useState<number | null>(null);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
 
   const SERVER_URL = serverConfig.url;
@@ -80,9 +81,9 @@ const TimestampAdder: React.FC = () => {
   // 썸네일 클릭 시 비디오 재생 위치 이동
   const handleCanvasDoubleClick = (e: React.MouseEvent) => {
     const canvas = e.target as HTMLCanvasElement;
-
     if (!canvas || !canvas.getBoundingClientRect) return;
 
+    // 기존에 선택된 범위가 있으면 삭제
     const canvasRect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - canvasRect.left;
     const time = (mouseX / canvasRect.width) * duration;
@@ -92,13 +93,6 @@ const TimestampAdder: React.FC = () => {
       player.currentTime(time);
     }
   };
-
-  useEffect(() => {
-    document.addEventListener("mouseup", handleCanvasMouseUp);
-    return () => {
-      document.removeEventListener("mouseup", handleCanvasMouseUp);
-    };
-  }, [selectionRange]);
 
   useEffect(() => {
     if (selectedRangeId && videoRef.current) {
@@ -116,6 +110,8 @@ const TimestampAdder: React.FC = () => {
       player.on("timeupdate", onTimeUpdate);
 
       if (selectionRange.start !== undefined) {
+        console.log(selectionRange.start);
+        console.log(formatTime(selectionRange.start));
         player.currentTime(selectionRange.start);
         player.play();
       }
@@ -127,19 +123,30 @@ const TimestampAdder: React.FC = () => {
   }, [selectedRangeId]);
 
   // 선택 범위 드래그 시작
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+  const handleCanvasMouseDown = (e: React.MouseEvent, canvasId: number) => {
     setDragging(true);
+    setSelectionRange(null);
+    selectionRangeRef.current = null;
+
     const canvas = e.target as HTMLCanvasElement;
     const canvasRect = canvas.getBoundingClientRect();
     const startX = e.clientX - canvasRect.left;
     setDragStartX(startX);
-    setSelectionRange(null);
+
+    setRanges((prevRanges) => prevRanges.filter((range) => range.id !== canvasId));
+
+    const handleMouseUp = () => {
+      handleCanvasMouseUp(canvasId);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mouseup", handleMouseUp);
 
     e.preventDefault();
   };
 
   // 선택 범위 드래그 진행
-  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+  const handleCanvasMouseMove = (e: React.MouseEvent, canvasId: number) => {
     if (!dragging || draggingHandle) return;
 
     const canvas = e.target as HTMLCanvasElement;
@@ -152,25 +159,32 @@ const TimestampAdder: React.FC = () => {
     const startTime = (start / canvasRect.width) * duration;
     const endTime = (end / canvasRect.width) * duration;
 
-    setSelectionRange({ start: startTime, end: endTime });
+    const newSelection = { id: canvasId, start: startTime, end: endTime };
+    setSelectionRange(newSelection);
+    selectionRangeRef.current = newSelection;
+    setSelectedRangeId(canvasId);
   };
 
   // 선택 범위 드래그 종료
-  const handleCanvasMouseUp = () => {
+  const handleCanvasMouseUp = (canvasId: number) => {
     setDragging(false);
 
-    if (selectionRange) {
-      setRanges((prevRanges) => [
-        ...prevRanges,
-        {
-          id: `range-${Date.now()}`,
-          start: selectionRange.start,
-          end: selectionRange.end,
-        },
-      ]);
+    const selectionRange = selectionRangeRef.current;
+    if (!selectionRange) return;
 
-      // setSelectionRange(null);
-    }
+    setRanges((prevRanges) => {
+      const rangeIndex = prevRanges.findIndex((range) => range.id === canvasId);
+      if (rangeIndex > -1) {
+        return prevRanges.map((range) =>
+          range.id === canvasId ? { ...range, start: selectionRange.start, end: selectionRange.end } : range
+        );
+      } else {
+        return [...prevRanges, { id: canvasId, start: selectionRange.start, end: selectionRange.end }];
+      }
+    });
+
+    setSelectionRange(null);
+    selectionRangeRef.current = null;
   };
 
   // 선택 범위 삭제
@@ -180,6 +194,7 @@ const TimestampAdder: React.FC = () => {
       return;
     }
 
+    setSelectionRange(null);
     setRanges((prevRanges) => prevRanges.filter((range) => range.id !== selectedRangeId));
     setSelectedRangeId(null);
   };
@@ -194,12 +209,43 @@ const TimestampAdder: React.FC = () => {
     setIsLoading(true);
 
     try {
+      // 1. 시작 시간 기준으로 정렬
+      let adjustedRanges = [...ranges].sort((a, b) => a.start - b.start);
+
+      // 2. 겹치는 부분 조정 및 완전 포함된 범위 제거
+      let mergedRanges = [adjustedRanges[0]]; // 첫 번째 범위는 유지
+
+      for (let i = 1; i < adjustedRanges.length; i++) {
+        let prevRange = mergedRanges[mergedRanges.length - 1]; // 마지막으로 추가된 범위
+        let currRange = adjustedRanges[i];
+
+        if (prevRange.end > currRange.start) {
+          // 겹칠 경우 시작 조정
+          currRange.start = prevRange.end;
+
+          // 시작이 끝보다 크거나 같으면 삭제
+          if (currRange.start >= currRange.end) {
+            continue;
+          }
+        }
+
+        // 완전 포함된 범위 제거
+        if (prevRange.start <= currRange.start && prevRange.end >= currRange.end) {
+          continue;
+        }
+
+        mergedRanges.push(currRange);
+      }
+
+      // 업데이트된 ranges 상태 반영
+      setRanges(mergedRanges);
+
       const response = await fetch(`${SERVER_URL}/api/merge-video`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ranges }),
+        body: JSON.stringify({ ranges: mergedRanges }),
       });
 
       if (!response.ok) {
@@ -256,7 +302,7 @@ const TimestampAdder: React.FC = () => {
   }, [duration]);
 
   // 선택 범위 핸들 드래그 시작
-  const handleMouseDownHandle = (rangeId: string, handleType: "start" | "end", event: React.MouseEvent) => {
+  const handleMouseDownHandle = (rangeId: number, handleType: "start" | "end", event: React.MouseEvent) => {
     event.preventDefault();
     setDragging(true);
     setDraggingHandle(handleType);
@@ -269,11 +315,16 @@ const TimestampAdder: React.FC = () => {
 
     e.preventDefault();
 
-    const canvasRect = canvasRef.current.getBoundingClientRect();
+    // 선택된 캔버스의 좌표를 가져옴
+    const canvas = canvasRef.current;
+    const canvasRect = canvas.getBoundingClientRect();
+
+    // 마우스의 상대 위치 계산
     const mouseX = e.clientX - canvasRect.left;
+
+    // 범위를 비율에 맞게 변환
     const time = (mouseX / canvasRect.width) * duration;
 
-    // 선택된 범위 찾아서 드래그 시작/끝 위치를 수정
     setRanges((prevRanges) =>
       prevRanges.map((range) => {
         if (range.id === selectedRangeId) {
@@ -317,13 +368,6 @@ const TimestampAdder: React.FC = () => {
     setCanvases((prev) => [...prev, { id: Date.now() }]);
   };
 
-  useEffect(() => {
-    if (!selectionRange) return;
-    console.log(selectionRange);
-    console.log(`${(selectionRange.start / duration) * 100}%`);
-    console.log(`${((selectionRange.end - selectionRange.start) / duration) * 100}%`);
-  }, [selectionRange]);
-
   return (
     <div className="video-wrapper">
       <div className="video-player">
@@ -359,7 +403,7 @@ const TimestampAdder: React.FC = () => {
               position: "absolute",
               top: 0,
               left: 0,
-              visibility: timelineImages.length !== 0 ? "visible" : "hidden",
+              visibility: timelineImages.length === 0 ? "hidden" : "visible",
             }}
           />
         </div>
@@ -373,7 +417,6 @@ const TimestampAdder: React.FC = () => {
               marginLeft: "auto",
               justifyContent: "flex-end",
               backgroundColor: "#191b1d",
-              width: "calc(100% - 65px)",
               height: "30px",
               marginBottom: "10px",
             }}
@@ -399,96 +442,89 @@ const TimestampAdder: React.FC = () => {
               style={{ backgroundColor: "#191b1d", opacity: 0.5 }}
             />
           </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
-              width: 800,
-              height: 500,
-            }}
-          >
+          <div className="timeline-wrapper">
             {canvases.map((canvas) => (
-              <div key={canvas.id} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <button onClick={addCanvas} className="canvas-btn">
-                  추가
-                </button>
+              <div key={canvas.id} style={{ position: "relative", display: "flex", gap: "10px", alignItems: "center" }}>
                 <canvas
-                  width={730}
+                  id={canvas.id.toString()}
+                  width={800}
                   height={35}
                   style={{
                     position: "relative",
                     backgroundColor: "#f1f1f1",
                     cursor: "pointer",
+                    opacity: 0.5,
                   }}
-                  onDoubleClick={handleCanvasDoubleClick}
-                  onMouseDown={handleCanvasMouseDown}
-                  onMouseMove={handleCanvasMouseMove}
-                  onMouseUp={handleCanvasMouseUp}
-                >
-                  {selectionRange && (
+                  onDoubleClick={(e) => handleCanvasDoubleClick(e)}
+                  onMouseDown={(e) => handleCanvasMouseDown(e, canvas.id)}
+                  onMouseMove={(e) => handleCanvasMouseMove(e, canvas.id)}
+                  onMouseUp={() => handleCanvasMouseUp(canvas.id)}
+                />
+                {ranges.map((range) => {
+                  if (range.id !== canvas.id) return null;
+
+                  return (
                     <div
-                      className="selection-range"
+                      key={range.id}
                       style={{
-                        left: `${(selectionRange.start / duration) * 100}%`,
-                        width: `${((selectionRange.end - selectionRange.start) / duration) * 100}%`,
-                        backgroundColor: "rgba(0, 0, 0, 0.5)",
-                        border: "1px solid #0056b3",
+                        position: "absolute",
+                        left: `${(range.start / duration) * 100}%`,
+                        width: `${((range.end - range.start) / duration) * 100}%`,
+                        height: "33px",
+                        border: selectedRangeId === range.id ? "2px solid #0056b3" : "2px solid rgb(204, 204, 204)",
+                        backgroundColor: "#689c74",
+                        cursor: "pointer",
                       }}
-                    ></div>
-                  )}
-                  <h1>{selectionRange?.start}</h1>
-                </canvas>
+                      onClick={() => setSelectedRangeId(range.id)}
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: "50%",
+                          left: "50%",
+                          transform: "translate(-50%, -50%)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      >
+                        {formatTime(range.start)} - {formatTime(range.end)}
+                      </span>
+                      <div
+                        className="handle start-handle"
+                        style={{ left: 0 }}
+                        onMouseDown={(e) => handleMouseDownHandle(range.id, "start", e)}
+                      />
+                      <div
+                        className="handle end-handle"
+                        style={{ right: 0 }}
+                        onMouseDown={(e) => handleMouseDownHandle(range.id, "end", e)}
+                      />
+                    </div>
+                  );
+                })}
+
+                {selectionRange && selectionRange.id === canvas.id && (
+                  <div
+                    className="selection-range"
+                    style={{
+                      left: `${(selectionRange.start / duration) * 100}%`,
+                      width: `${((selectionRange.end - selectionRange.start) / duration) * 100}%`,
+                      backgroundColor: "#689c74",
+                      height: "33px",
+                      marginTop: "1px",
+                    }}
+                  />
+                )}
               </div>
             ))}
           </div>
-
-          {/* {canvases.map((canvas) => (
-            <canvas
-              key={canvas.id}
-              width={160}
-              height={90}
-              className="timeline-canvas"
-              style={{ backgroundColor: "#191b1d", opacity: 0.5 }}
-              onDoubleClick={handleCanvasDoubleClick}
-              onMouseDown={handleCanvasMouseDown}
-              onMouseMove={handleCanvasMouseMove}
-              onMouseUp={handleCanvasMouseUp}
-            >
-              {ranges.map((range) => (
-                <div
-                  key={range.id}
-                  className="selection-range"
-                  style={{
-                    border: selectedRangeId === range.id ? "2px solid #0056b3" : "2px solid rgb(204, 204, 204)",
-                    left: `${(range.start / duration) * 100}%`,
-                    width: `${((range.end - range.start) / duration) * 100}%`,
-                  }}
-                  onClick={() => setSelectedRangeId(range.id)}
-                >
-                  <div
-                    className="handle start-handle"
-                    style={{ left: 0 }}
-                    onMouseDown={(e) => handleMouseDownHandle(range.id, "start", e)}
-                  />
-                  <div
-                    className="handle end-handle"
-                    style={{ right: 0 }}
-                    onMouseDown={(e) => handleMouseDownHandle(range.id, "end", e)}
-                  />
-                </div>
-              ))}
-              {selectionRange && (
-                <div
-                  className="selection-range"
-                  style={{
-                    left: `${(selectionRange.start / duration) * 100}%`,
-                    width: `${((selectionRange.end - selectionRange.start) / duration) * 100}%`,
-                  }}
-                ></div>
-              )}
-            </canvas>
-          ))} */}
+        </div>
+        <div className="controls">
+          <button onClick={addCanvas} className="canvas-btn">
+            Add
+          </button>
+          <button onClick={handleRangeRemove}>Clear Selection</button>
+          <button onClick={handleMerge}>Merge</button>
         </div>
       </div>
       <video

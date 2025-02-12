@@ -15,6 +15,9 @@ const Navbar: React.FC = () => {
       <NavLink to="/add" className={getNavClass}>
         3. Timestamp Adder
       </NavLink>
+      <NavLink to="/hls" className={getNavClass}>
+        4. Timestamp Multi View with HLS
+      </NavLink>
     </nav>
   );
 };

@@ -19,6 +19,23 @@ router.get("/video-stream", async (_: Request, res: Response) => {
   }
 });
 
+router.post("/hls/update", (req: Request, res: Response) => {
+  const { m3u8Content } = req.body;
+
+  // 새로운 m3u8 콘텐츠를 파일로 저장
+  const m3u8Path = path.join(HLS_DIRECTORY, "updated_playlist.m3u8");
+
+  fs.writeFileSync(m3u8Path, m3u8Content);
+
+  // 클라이언트에게 스트리밍 URL을 반환
+  res.json({ streamUrl: `http://localhost:4000/api/updated_playlist.m3u8` });
+});
+
+router.get("/updated_playlist.m3u8", (_: Request, res: Response) => {
+  const playlistPath = path.join(HLS_DIRECTORY, "updated_playlist.m3u8");
+  sendFileIfExists(playlistPath, res, "Playlist not found");
+});
+
 // HLS 플레이리스트 제공
 router.get("/hls", (_: Request, res: Response) => {
   const playlistPath = path.join(HLS_DIRECTORY, "output.m3u8");
@@ -28,6 +45,7 @@ router.get("/hls", (_: Request, res: Response) => {
 // HLS 세그먼트 파일 제공
 router.get("/:filename", (req: Request, res: Response) => {
   const filePath = path.join(HLS_DIRECTORY, req.params.filename);
+  console.log("Requesting file:", filePath);
   sendFileIfExists(filePath, res, "Segment not found");
 });
 

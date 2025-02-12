@@ -210,3 +210,15 @@
     background-color: #555;
   }
 }
+
+.timeline-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 800px;
+  height: 300px;
+  overflow: auto;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

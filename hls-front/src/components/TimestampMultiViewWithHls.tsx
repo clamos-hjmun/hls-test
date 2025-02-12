@@ -6,7 +6,7 @@ import videojs from "video.js";
 import Hls from "hls.js";
 import "video.js/dist/video-js.css";
 
-const TimestampSingleView: React.FC = () => {
+const TimestampMultiViewWithHls: React.FC = () => {
   const { setIsLoading } = useStore();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mergedVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -19,6 +19,9 @@ const TimestampSingleView: React.FC = () => {
   const [ranges, setRanges] = useState<{ id: string; start: number; end: number }[]>([]);
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
   const [selectedRangeId, setSelectedRangeId] = useState<string | null>(null);
+  const [m3u8FileObject, setM3u8FileObject] = useState<{ accumulatedTime: number; duration: string; tsFile: string }[]>(
+    []
+  );
 
   const SERVER_URL = serverConfig.url;
 
@@ -50,6 +53,81 @@ const TimestampSingleView: React.FC = () => {
       };
     }
   }, []);
+
+  useEffect(() => {
+    fetch(`${SERVER_URL}/api/hls`)
+      .then((res) => res.text())
+      .then((m3u8Text) => {
+        const tsArray = [];
+        let accumulatedTime = 0;
+        const regex = /#EXTINF:(\d+\.\d+),\s*(\S+\.ts)/g;
+        let match;
+
+        // 정규식을 사용해 #EXTINF와 ts 파일을 찾아서 배열로 저장
+        while ((match = regex.exec(m3u8Text)) !== null) {
+          accumulatedTime += parseFloat(match[1]);
+          tsArray.push({
+            accumulatedTime: accumulatedTime,
+            duration: match[1],
+            tsFile: match[2],
+          });
+        }
+
+        // 결과 배열 저장
+        setM3u8FileObject(tsArray);
+      });
+  }, []);
+
+  const modifyM3U8 = () => {
+    // 필터링된 .ts 파일들로 새로운 m3u8 생성
+    let newM3U8Content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:12\n#EXT-X-MEDIA-SEQUENCE:0\n";
+    let previousEndTime = 0;
+    // ranges에 포함된 시간 범위에 해당하는 ts 파일들만 필터링
+    const filteredTsFiles = m3u8FileObject.filter(({ accumulatedTime }) => {
+      // 선택된 범위 중 하나라도 해당 ts 파일의 accumulatedTime이 범위 안에 포함되는지 체크
+      return ranges.some((range) => accumulatedTime >= range.start && accumulatedTime <= range.end);
+    });
+
+    // 필터링된 .ts 파일들을 새로운 m3u8 포맷으로 변환
+    filteredTsFiles.forEach((file, index) => {
+      // 새로운 영역이 시작될 때마다 EXT-X-DISCONTINUITY 추가
+      if (index > 0 && file.accumulatedTime !== previousEndTime) {
+        newM3U8Content += "#EXT-X-DISCONTINUITY\n";
+      }
+
+      newM3U8Content += `#EXTINF:${file.duration},\n${file.tsFile}\n`;
+      previousEndTime = file.accumulatedTime + file.duration;
+    });
+
+    newM3U8Content += "#EXT-X-ENDLIST";
+
+    fetch(`${SERVER_URL}/api/hls/update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ m3u8Content: newM3U8Content }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        const streamUrl = data.streamUrl;
+
+        videojs(mergedVideoRef.current, {
+          autoplay: true,
+          controls: true,
+          muted: true,
+          preload: "auto",
+          playbackRates: [0.5, 0.75, 1, 1.25, 1.5],
+          sources: [
+            {
+              src: `${SERVER_URL}/api/updated_playlist.m3u8`,
+              type: "application/x-mpegURL",
+            },
+          ],
+        });
+      })
+      .catch((error) => console.error("Error updating m3u8:", error));
+  };
 
   // 타임라인 이미지 생성 함수
   const generateTimeline = async (duration: number) => {
@@ -218,59 +296,14 @@ const TimestampSingleView: React.FC = () => {
     setSelectedRangeId(null);
   };
 
-  // 선택 범위 전체 재생
-  const handleRangeView = () => {
-    if (!videoRef.current || ranges.length === 0) return;
+  // 선택 범위 병합 처리 함수
+  const handleMerge = async () => {
+    if (!ranges || ranges.length === 0) {
+      alert("병합할 범위를 선택해 주세요.");
+      return;
+    }
 
-    const player = videojs(videoRef.current);
-    let currentIndex = 0;
-
-    const playNextRange = () => {
-      if (currentIndex >= ranges.length) {
-        player.pause();
-        return;
-      }
-
-      const { start, end } = ranges[currentIndex];
-      player.currentTime(start);
-      player.play();
-
-      const onTimeUpdate = () => {
-        if (player.currentTime() >= end) {
-          player.pause();
-          player.off("timeupdate", onTimeUpdate);
-          currentIndex++;
-          playNextRange();
-        }
-      };
-
-      player.on("timeupdate", onTimeUpdate);
-    };
-
-    playNextRange();
-  };
-
-  // 선택한 범위 이전 재생
-  const handelPreview = () => {
-    if (!videoRef.current || !selectedRangeId) return;
-
-    const player = videojs(videoRef.current);
-    const selectionRange = ranges.find((range) => range.id === selectedRangeId);
-
-    if (!selectionRange) return;
-
-    const { start, end } = selectionRange;
-    player.currentTime(start);
-    player.play();
-
-    const onTimeUpdate = () => {
-      if (player.currentTime() >= end) {
-        player.pause();
-        player.off("timeupdate", onTimeUpdate);
-      }
-    };
-
-    player.on("timeupdate", onTimeUpdate);
+    modifyM3U8();
   };
 
   // 비디오의 currentTime을 기준으로 빨간 세로선을 그리는 함수
@@ -468,11 +501,17 @@ const TimestampSingleView: React.FC = () => {
         )}
         <div className="controls">
           <button onClick={handleRangeRemove}>Clear Selection</button>
-          <button onClick={handleRangeView}>View Selection</button>
+          <button onClick={handleMerge}>Merge</button>
         </div>
       </div>
+      <video
+        ref={mergedVideoRef}
+        className="merged-video-container video-js vjs-default-skin"
+        controls
+        preload="auto"
+      />
     </div>
   );
 };
 
-export default TimestampSingleView;
+export default TimestampMultiViewWithHls;
