@@ -9,10 +9,9 @@ const AppRoutes: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/multi" replace />} />
-      <Route path="/multi" element={<TimestampMultiView />} />
+      <Route path="/multi" element={<TimestampMultiViewWithHls />} />
       <Route path="/single" element={<TimestampSingleView />} />
       <Route path="/add" element={<TimestampAdder />} />
-      <Route path="/hls" element={<TimestampMultiViewWithHls />} />
     </Routes>
   );
 };

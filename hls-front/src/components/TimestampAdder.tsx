@@ -24,6 +24,9 @@ const TimestampAdder: React.FC = () => {
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
   const [selectedRangeId, setSelectedRangeId] = useState<number | null>(null);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
+  const [m3u8FileObject, setM3u8FileObject] = useState<{ accumulatedTime: number; duration: string; tsFile: string }[]>(
+    []
+  );
 
   const SERVER_URL = serverConfig.url;
 
@@ -56,6 +59,81 @@ const TimestampAdder: React.FC = () => {
       };
     }
   }, []);
+
+  useEffect(() => {
+    fetch(`${SERVER_URL}/api/hls`)
+      .then((res) => res.text())
+      .then((m3u8Text) => {
+        const tsArray = [];
+        let accumulatedTime = 0;
+        const regex = /#EXTINF:(\d+\.\d+),\s*(\S+\.ts)/g;
+        let match;
+
+        // 정규식을 사용해 #EXTINF와 ts 파일을 찾아서 배열로 저장
+        while ((match = regex.exec(m3u8Text)) !== null) {
+          accumulatedTime += parseFloat(match[1]);
+          tsArray.push({
+            accumulatedTime: accumulatedTime,
+            duration: match[1],
+            tsFile: match[2],
+          });
+        }
+
+        // 결과 배열 저장
+        setM3u8FileObject(tsArray);
+      });
+  }, []);
+
+  const modifyM3U8 = (mergedRanges) => {
+    // 필터링된 .ts 파일들로 새로운 m3u8 생성
+    let newM3U8Content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:12\n#EXT-X-MEDIA-SEQUENCE:0\n";
+    let previousEndTime = 0;
+    // ranges에 포함된 시간 범위에 해당하는 ts 파일들만 필터링
+    const filteredTsFiles = m3u8FileObject.filter(({ accumulatedTime }) => {
+      // 선택된 범위 중 하나라도 해당 ts 파일의 accumulatedTime이 범위 안에 포함되는지 체크
+      return mergedRanges.some((range) => accumulatedTime >= range.start && accumulatedTime <= range.end);
+    });
+
+    // 필터링된 .ts 파일들을 새로운 m3u8 포맷으로 변환
+    filteredTsFiles.forEach((file, index) => {
+      // 새로운 영역이 시작될 때마다 EXT-X-DISCONTINUITY 추가
+      if (index > 0 && file.accumulatedTime !== previousEndTime) {
+        newM3U8Content += "#EXT-X-DISCONTINUITY\n";
+      }
+
+      newM3U8Content += `#EXTINF:${file.duration},\n${file.tsFile}\n`;
+      previousEndTime = file.accumulatedTime + file.duration;
+    });
+
+    newM3U8Content += "#EXT-X-ENDLIST";
+
+    fetch(`${SERVER_URL}/api/hls/update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ m3u8Content: newM3U8Content }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        const streamUrl = data.streamUrl;
+
+        videojs(mergedVideoRef.current, {
+          autoplay: true,
+          controls: true,
+          muted: true,
+          preload: "auto",
+          playbackRates: [0.5, 0.75, 1, 1.25, 1.5],
+          sources: [
+            {
+              src: `${SERVER_URL}/api/updated_playlist.m3u8`,
+              type: "application/x-mpegURL",
+            },
+          ],
+        });
+      })
+      .catch((error) => console.error("Error updating m3u8:", error));
+  };
 
   // 타임라인 이미지 생성 함수
   const generateTimeline = async (duration: number) => {
@@ -110,7 +188,6 @@ const TimestampAdder: React.FC = () => {
       player.on("timeupdate", onTimeUpdate);
 
       if (selectionRange.start !== undefined) {
-        console.log(selectionRange.start);
         console.log(formatTime(selectionRange.start));
         player.currentTime(selectionRange.start);
         player.play();
@@ -240,27 +317,7 @@ const TimestampAdder: React.FC = () => {
       // 업데이트된 ranges 상태 반영
       setRanges(mergedRanges);
 
-      const response = await fetch(`${SERVER_URL}/api/merge-video`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ ranges: mergedRanges }),
-      });
-
-      if (!response.ok) {
-        throw new Error("비디오 병합에 실패했습니다.");
-      }
-
-      const data = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(data);
-
-      // 병합된 비디오를 mergedVideoRef에 로드
-      if (mergedVideoRef.current) {
-        mergedVideoRef.current.src = downloadUrl;
-        mergedVideoRef.current.load();
-        mergedVideoRef.current.play();
-      }
+      modifyM3U8(mergedRanges);
     } catch (error) {
       console.error("비디오 병합 중 오류 발생:", error);
     } finally {
@@ -529,10 +586,9 @@ const TimestampAdder: React.FC = () => {
       </div>
       <video
         ref={mergedVideoRef}
-        className="merged-video-container"
+        className="merged-video-container video-js vjs-default-skin"
         controls
         preload="auto"
-        style={{ height: "340px" }}
       />
     </div>
   );

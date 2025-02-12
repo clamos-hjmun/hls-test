@@ -7,16 +7,13 @@ const Navbar: React.FC = () => {
   return (
     <nav className="navbar">
       <NavLink to="/multi" className={getNavClass}>
-        1. Timestamp Multi View with MP4
+        1. Timestamp Multi View
       </NavLink>
       <NavLink to="/single" className={getNavClass}>
         2. Timestamp Single View
       </NavLink>
       <NavLink to="/add" className={getNavClass}>
         3. Timestamp Adder
-      </NavLink>
-      <NavLink to="/hls" className={getNavClass}>
-        4. Timestamp Multi View with HLS
       </NavLink>
     </nav>
   );
