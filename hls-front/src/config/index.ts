@@ -1,5 +1,5 @@
 const serverConfig = {
-  url: import.meta.env.VITE_SERVER_URL,
+  url: "http://localhost:4000",
 };
 
 export default serverConfig;

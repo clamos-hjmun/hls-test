@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Skeleton from "@mui/material/Skeleton";
 import useStore from "store/useStore";
 import serverConfig from "config";
@@ -84,7 +84,7 @@ const TimestampAdder: React.FC = () => {
       });
   }, []);
 
-  const modifyM3U8 = (mergedRanges) => {
+  const modifyM3U8 = (mergedRanges: { id: number; start: number; end: number }[]) => {
     // 필터링된 .ts 파일들로 새로운 m3u8 생성
     let newM3U8Content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:12\n#EXT-X-MEDIA-SEQUENCE:0\n";
     let previousEndTime = 0;
@@ -102,7 +102,7 @@ const TimestampAdder: React.FC = () => {
       }
 
       newM3U8Content += `#EXTINF:${file.duration},\n${file.tsFile}\n`;
-      previousEndTime = file.accumulatedTime + file.duration;
+      previousEndTime = file.accumulatedTime + Number(file.duration);
     });
 
     newM3U8Content += "#EXT-X-ENDLIST";
@@ -115,8 +115,8 @@ const TimestampAdder: React.FC = () => {
       body: JSON.stringify({ m3u8Content: newM3U8Content }),
     })
       .then((response) => response.json())
-      .then((data) => {
-        const streamUrl = data.streamUrl;
+      .then(() => {
+        if (!mergedVideoRef.current) return;
 
         videojs(mergedVideoRef.current, {
           autoplay: true,

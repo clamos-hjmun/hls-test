@@ -1,13 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import Skeleton from "@mui/material/Skeleton";
-import useStore from "store/useStore";
 import serverConfig from "config";
 import videojs from "video.js";
 import Hls from "hls.js";
+import style from "./TimestampMultiViewWithHls.module.css";
 import "video.js/dist/video-js.css";
 
 const TimestampMultiViewWithHls: React.FC = () => {
-  const { setIsLoading } = useStore();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mergedVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,6 +17,7 @@ const TimestampMultiViewWithHls: React.FC = () => {
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
   const [ranges, setRanges] = useState<{ id: string; start: number; end: number }[]>([]);
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
   const [selectedRangeId, setSelectedRangeId] = useState<string | null>(null);
   const [m3u8FileObject, setM3u8FileObject] = useState<{ accumulatedTime: number; duration: string; tsFile: string }[]>(
     []
@@ -96,7 +96,7 @@ const TimestampMultiViewWithHls: React.FC = () => {
       }
 
       newM3U8Content += `#EXTINF:${file.duration},\n${file.tsFile}\n`;
-      previousEndTime = file.accumulatedTime + file.duration;
+      previousEndTime = file.accumulatedTime + Number(file.duration);
     });
 
     newM3U8Content += "#EXT-X-ENDLIST";
@@ -109,8 +109,8 @@ const TimestampMultiViewWithHls: React.FC = () => {
       body: JSON.stringify({ m3u8Content: newM3U8Content }),
     })
       .then((response) => response.json())
-      .then((data) => {
-        const streamUrl = data.streamUrl;
+      .then(() => {
+        if (!mergedVideoRef.current) return;
 
         videojs(mergedVideoRef.current, {
           autoplay: true,
@@ -263,6 +263,7 @@ const TimestampMultiViewWithHls: React.FC = () => {
 
     const startTime = (start / canvasRect.width) * duration;
     const endTime = (end / canvasRect.width) * duration;
+    
 
     setSelectionRange({ start: startTime, end: endTime });
   };
@@ -357,6 +358,8 @@ const TimestampMultiViewWithHls: React.FC = () => {
     const mouseX = e.clientX - canvasRect.left;
     const time = (mouseX / canvasRect.width) * duration;
 
+    if (isOverlapping({ start: time, end: time }, selectedRangeId)) return;
+
     // 선택된 범위 찾아서 드래그 시작/끝 위치를 수정
     setRanges((prevRanges) =>
       prevRanges.map((range) => {
@@ -370,6 +373,8 @@ const TimestampMultiViewWithHls: React.FC = () => {
         return range;
       })
     );
+
+    setSelectedRangeId(null);
   };
 
   // 선택 범위 핸들 드래그 종료
@@ -392,46 +397,91 @@ const TimestampMultiViewWithHls: React.FC = () => {
 
   // 시간 포맷팅 함수
   const formatTime = (time: number): string => {
-    const minutes = Math.floor(time / 60);
+    // 60초 이상일 경우 분 단위로 변환
+    const hours = Math.floor(time / 3600);
+    const minutes = Math.floor((time % 3600) / 60);
     const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+    const formattedHours = hours.toString().padStart(2, "0");
+    const formattedMinutes = minutes.toString().padStart(2, "0");
+    const formattedSeconds = seconds.toString().padStart(2, "0");
+
+    if (hours > 0) {
+      return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+    } else if (minutes > 0) {
+      return `${formattedMinutes}:${formattedSeconds}`;
+    } else {
+      return formattedSeconds;
+    }
+  };
+
+  const handleMouseRangeDown = (e: React.MouseEvent, rangeId: string) => {
+    if (!canvasRef.current) return;
+
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - canvasRect.left;
+    const range = ranges.find((range) => range.id === rangeId);
+
+    if (!range) return;
+
+    // 클릭한 위치에서 range 시작 지점까지의 거리(offset)를 저장
+    setDragOffset(mouseX - (range.start / duration) * canvasRect.width);
+    setDragging(true);
+  };
+
+  const handleMouseRangeMove = (e: React.MouseEvent, rangeId: string) => {
+    if (!canvasRef.current || !dragging) return;
+
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const range = ranges.find((range) => range.id === rangeId);
+
+    if (!range) return;
+
+    const mouseX = e.clientX - canvasRect.left;
+    const time = ((mouseX - dragOffset) / canvasRect.width) * duration;
+    const rangeWidth = range.end - range.start;
+
+    // 이동 가능한 범위 제한
+    const newStart = Math.max(0, Math.min(time, duration - rangeWidth));
+    const newEnd = newStart + rangeWidth;
+
+    if (isOverlapping({ start: newStart, end: newEnd }, rangeId)) return;
+
+    setRanges((prevRanges) =>
+      prevRanges.map((prevRange) =>
+        prevRange.id === rangeId ? { ...prevRange, start: newStart, end: newEnd } : prevRange
+      )
+    );
+    setSelectedRangeId(null);
+  };
+
+  const isOverlapping = ({ start, end }: { start: number; end: number }, rangeId?: string): boolean => {
+    return ranges.some((range) => {
+      if (rangeId && range.id === rangeId) return false;
+      return start < range.end && end > range.start;
+    });
   };
 
   return (
-    <div className="video-wrapper">
-      <div className="video-player">
-        <div
-          style={{
-            display: "relative",
-            width: 800,
-            height: 340,
-          }}
-        >
+    <div className={style.wrapper}>
+      <div className={style.left_container}>
+        <div className={style.video_wrapper}>
           {timelineImages.length === 0 && (
             <Skeleton
               variant="rectangular"
               width={"100%"}
               height={"100%"}
               animation="wave"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: 800,
-                height: 340,
-              }}
+              className={style.video_player}
             />
           )}
           <video
             ref={videoRef}
-            className="video-js vjs-default-skin"
+            className={`${style.video_player} video-js vjs-default-skin`}
             controls
             preload="auto"
             width="800"
             style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
               visibility: timelineImages.length !== 0 ? "visible" : "hidden",
             }}
           />
@@ -439,18 +489,18 @@ const TimestampMultiViewWithHls: React.FC = () => {
 
         {timelineImages.length !== 0 ? (
           <>
-            <div className="timeline-container">
+            <div className={style.timeline_container}>
               {timelineImages.map((thumbnail, index) => {
                 return (
-                  <div key={index} className="timeline-thumbnail">
+                  <div key={index} className={style.timeline_thumbnail}>
                     <img src={thumbnail.url} alt={`Screenshot at ${thumbnail.time}s`} />
-                    <div className="timestamp">{formatTime(thumbnail.time)}</div>
+                    <div className={style.timestamp}>{formatTime(thumbnail.time)}</div>
                   </div>
                 );
               })}
               <canvas
                 ref={canvasRef}
-                className="timeline-canvas"
+                className={style.timeline_canvas}
                 width={160}
                 height={90}
                 onDoubleClick={handleCanvasDoubleClick}
@@ -461,21 +511,28 @@ const TimestampMultiViewWithHls: React.FC = () => {
               {ranges.map((range) => (
                 <div
                   key={range.id}
-                  className="selection-range"
+                  className={style.selection_range}
                   style={{
                     border: selectedRangeId === range.id ? "2px solid #0056b3" : "2px solid rgb(204, 204, 204)",
                     left: `${(range.start / duration) * 100}%`,
                     width: `${((range.end - range.start) / duration) * 100}%`,
                   }}
-                  onClick={() => setSelectedRangeId(range.id)}
+                  onDoubleClick={() => setSelectedRangeId(range.id)}
                 >
+                  <span
+                    className={style.range_time}
+                    onMouseDown={(e) => handleMouseRangeDown(e, range.id)}
+                    onMouseMove={(e) => handleMouseRangeMove(e, range.id)}
+                  >
+                    {formatTime(range.start)} - {formatTime(range.end)}
+                  </span>
                   <div
-                    className="handle start-handle"
+                    className={`${style.handle} ${style.start_handle}`}
                     style={{ left: 0 }}
                     onMouseDown={(e) => handleMouseDownHandle(range.id, "start", e)}
                   />
                   <div
-                    className="handle end-handle"
+                    className={`${style.handle} ${style.end_handle}`}
                     style={{ right: 0 }}
                     onMouseDown={(e) => handleMouseDownHandle(range.id, "end", e)}
                   />
@@ -483,7 +540,7 @@ const TimestampMultiViewWithHls: React.FC = () => {
               ))}
               {selectionRange && (
                 <div
-                  className="selection-range"
+                  className={style.selection_range}
                   style={{
                     left: `${(selectionRange.start / duration) * 100}%`,
                     width: `${((selectionRange.end - selectionRange.start) / duration) * 100}%`,
@@ -494,19 +551,19 @@ const TimestampMultiViewWithHls: React.FC = () => {
           </>
         ) : (
           <React.Fragment>
-            <div className="timeline-container">
+            <div className={style.timeline_container}>
               <Skeleton variant="rectangular" width={"100%"} height={90} animation="wave" />
             </div>
           </React.Fragment>
         )}
-        <div className="controls">
+        <div className={style.controls}>
           <button onClick={handleRangeRemove}>Clear Selection</button>
           <button onClick={handleMerge}>Merge</button>
         </div>
       </div>
       <video
         ref={mergedVideoRef}
-        className="merged-video-container video-js vjs-default-skin"
+        className={`${style.merged_video_container} video-js vjs-default-skin`}
         controls
         preload="auto"
       />

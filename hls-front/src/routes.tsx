@@ -1,7 +1,6 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import TimestampAdder from "./components/TimestampAdder";
-import TimestampMultiView from "./components/TimestampMultiView";
 import TimestampSingleView from "./components/TimestampSingleView";
 import TimestampMultiViewWithHls from "components/TimestampMultiViewWithHls";
 

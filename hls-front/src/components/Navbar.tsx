@@ -9,12 +9,12 @@ const Navbar: React.FC = () => {
       <NavLink to="/multi" className={getNavClass}>
         1. Timestamp Multi View
       </NavLink>
-      <NavLink to="/single" className={getNavClass}>
+      {/* <NavLink to="/single" className={getNavClass}>
         2. Timestamp Single View
       </NavLink>
       <NavLink to="/add" className={getNavClass}>
         3. Timestamp Adder
-      </NavLink>
+      </NavLink> */}
     </nav>
   );
 };

@@ -1,15 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import Skeleton from "@mui/material/Skeleton";
-import useStore from "store/useStore";
 import serverConfig from "config";
 import videojs from "video.js";
 import Hls from "hls.js";
 import "video.js/dist/video-js.css";
 
 const TimestampSingleView: React.FC = () => {
-  const { setIsLoading } = useStore();
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const mergedVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timelineImages, setTimelineImages] = useState<{ url: string; time: number }[]>([]);
   const [duration, setDuration] = useState<number>(0);
@@ -194,14 +191,26 @@ const TimestampSingleView: React.FC = () => {
     setDragging(false);
 
     if (selectionRange) {
-      setRanges((prevRanges) => [
-        ...prevRanges,
-        {
-          id: `range-${Date.now()}`,
-          start: selectionRange.start,
-          end: selectionRange.end,
-        },
-      ]);
+      setRanges((prevRanges) => {
+        // 기존 범위와 겹치는지 확인
+        const isOverlapping = prevRanges.some(
+          (range) => !(selectionRange.end <= range.start || selectionRange.start >= range.end)
+        );
+
+        // 겹치는 경우, 겹치기 직전 범위까지만 추가
+        if (isOverlapping) {
+          return prevRanges;
+        }
+
+        return [
+          ...prevRanges,
+          {
+            id: `range-${Date.now()}`,
+            start: selectionRange.start,
+            end: selectionRange.end,
+          },
+        ];
+      });
 
       setSelectionRange(null);
     }
@@ -248,29 +257,6 @@ const TimestampSingleView: React.FC = () => {
     };
 
     playNextRange();
-  };
-
-  // 선택한 범위 이전 재생
-  const handelPreview = () => {
-    if (!videoRef.current || !selectedRangeId) return;
-
-    const player = videojs(videoRef.current);
-    const selectionRange = ranges.find((range) => range.id === selectedRangeId);
-
-    if (!selectionRange) return;
-
-    const { start, end } = selectionRange;
-    player.currentTime(start);
-    player.play();
-
-    const onTimeUpdate = () => {
-      if (player.currentTime() >= end) {
-        player.pause();
-        player.off("timeupdate", onTimeUpdate);
-      }
-    };
-
-    player.on("timeupdate", onTimeUpdate);
   };
 
   // 비디오의 currentTime을 기준으로 빨간 세로선을 그리는 함수

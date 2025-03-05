@@ -1,7 +1,7 @@
-import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import videoRoutes from "./router/videoRoutes";
+const express = require("express");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const videoRoutes = require("./router/videoRoutes");
 
 const app = express();
 const PORT = 4000;
