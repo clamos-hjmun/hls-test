@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  frontend:
+    build:
+      context: ./hls-front
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: always
+
+  backend:
+    build:
+      context: ./hls-server
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    volumes:
+      - /root/hls:/root/hls
+      - ./output:/app/output
+    environment:
+      - NODE_ENV=production
+    restart: always
